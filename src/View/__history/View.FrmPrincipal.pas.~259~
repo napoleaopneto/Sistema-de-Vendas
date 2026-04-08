@@ -1,0 +1,503 @@
+unit View.FrmPrincipal;
+
+interface
+
+uses
+  vcl.Styles,
+  vcl.Themes,
+  Winapi.Windows,
+  Winapi.Messages,
+  System.SysUtils,
+  System.Variants,
+  System.Classes,
+  Vcl.Graphics,
+  Vcl.Controls,
+  Vcl.Forms,
+  Vcl.Dialogs,
+  Vcl.ComCtrls,
+  Vcl.ExtCtrls,
+  Vcl.Menus,
+  Vcl.StdCtrls,
+  Controller.ComponenteQuery,
+  Controller.Conexao,
+  Data.DB,
+  Vcl.Grids,
+  Vcl.DBGrids,
+  Controller.Crud,
+  Interfaces.Crud, FireDAC.Stan.Intf, FireDAC.Stan.Option, FireDAC.Stan.Param,
+  FireDAC.Stan.Error, FireDAC.DatS, FireDAC.Phys.Intf, FireDAC.DApt.Intf,
+  FireDAC.Comp.DataSet, FireDAC.Comp.Client;
+
+type
+  TFrmPrincipal = class(TForm)
+    pnTop: TPanel;
+    pnPrincipal: TPanel;
+    dbgPedidos: TDBGrid;
+    btnNovo: TButton;
+    btnBuscarClientes: TButton;
+    btnBuscarPedidos: TButton;
+    btnGravar: TButton;
+    lbCodCliente: TLabel;
+    edtCodCliente: TEdit;
+    edtDescCliente: TEdit;
+    edtCidade: TEdit;
+    edtUF: TEdit;
+    lbDescricao: TLabel;
+    lbCidade: TLabel;
+    lbUF: TLabel;
+    lbPedido: TLabel;
+    edtCodPedido: TEdit;
+    edtDescProduto: TEdit;
+    edtQtde: TEdit;
+    lbDescricaoProduto: TLabel;
+    lbQtde: TLabel;
+    edtValorUnit: TEdit;
+    lbVlrUnit: TLabel;
+    edtVlrTotal: TEdit;
+    lbValorTootal: TLabel;
+    btnAdd: TButton;
+    dsPedidosItens: TDataSource;
+    item_produto: TFDMemTable;
+    item_produtocodigo: TIntegerField;
+    item_produtodescricao: TStringField;
+    item_produtoquantidade: TCurrencyField;
+    item_produtovlr_unitario: TCurrencyField;
+    item_produtovlr_total: TCurrencyField;
+    btnCancelar: TButton;
+    pnBotton: TPanel;
+    lbTotal: TLabel;
+    btnExcluir: TButton;
+    procedure FormCreate(Sender: TObject);
+    procedure btnNovoClick(Sender: TObject);
+    procedure btnAddClick(Sender: TObject);
+    procedure edtQtdeKeyPress(Sender: TObject; var Key: Char);
+    procedure FormKeyPress(Sender: TObject; var Key: Char);
+    procedure edtQtdeExit(Sender: TObject);
+    procedure dbgPedidosKeyDown(Sender: TObject; var Key: Word;
+      Shift: TShiftState);
+    procedure edtValorUnitExit(Sender: TObject);
+    procedure dbgPedidosDblClick(Sender: TObject);
+    procedure btnBuscarClientesClick(Sender: TObject);
+    procedure btnBuscarPedidosClick(Sender: TObject);
+    procedure edtCodClienteKeyDown(Sender: TObject; var Key: Word;
+      Shift: TShiftState);
+    procedure edtCodPedidoKeyDown(Sender: TObject; var Key: Word;
+      Shift: TShiftState);
+    procedure btnExcluirClick(Sender: TObject);
+  private
+    { Private declarations }
+    FOpen     : iSQLOpen;
+    FInsert   : iSQLInsert;
+    FDelete   : iSQLDelete;
+    FUpdate   : iSQLUpdate;
+    FCancelar : iSQLCancelar;
+    FStatePedido : String;
+    procedure TratarCampos(AValue : Boolean);
+    procedure LimparCampos(AValue : Boolean = true; ATipo : string = '');
+    procedure AdicionaItensProdutoMem();
+    procedure EditarItensProdutosMem();
+    procedure CalcularTotal;
+    function TextToFloat(aText: String): Double;
+    function CalcTotalPedido: String;
+    procedure ValidarCampos();
+  public
+    { Public declarations }
+  end;
+
+var
+  FrmPrincipal: TFrmPrincipal;
+
+implementation
+
+{$R *.dfm}
+
+function TFrmPrincipal.TextToFloat(aText: String): Double;
+var
+  LTexto : String;
+  LFmt   : TFormatSettings;
+begin
+  LFmt                  := TFormatSettings.Create;
+  LFmt.DecimalSeparator := '.';
+  LFmt.ThousandSeparator := ',';
+
+  LTexto := StringReplace(aText, '.', '', [rfReplaceAll]);
+  LTexto := StringReplace(LTexto, ',', '.', [rfReplaceAll]);
+
+  Result := StrToFloatDef(LTexto, 0, LFmt);
+end;
+
+procedure TFrmPrincipal.AdicionaItensProdutoMem;
+begin
+  if Not item_produto.Active then
+    item_produto.Active := true;
+  item_produto.Append;
+  item_produtodescricao.AsString := edtDescProduto.Text;
+  item_produtovlr_unitario.Value := TextToFloat(edtValorUnit.Text);
+  item_produtoquantidade.Value := TextToFloat(edtQtde.Text);
+  item_produtovlr_total.Value := TextToFloat(edtVlrTotal.Text);
+  item_produto.Post;
+
+  edtDescProduto.Clear;
+  edtQtde.Clear;
+  edtValorUnit.Clear;
+  edtVlrTotal.Clear;
+
+  edtDescProduto.SetFocus
+end;
+
+procedure TFrmPrincipal.btnAddClick(Sender: TObject);
+begin
+  ValidarCampos;
+  btnNovo.Enabled := false;
+  btnGravar.Enabled := true;
+  if btnAdd.Caption = '+ Atualizar' then
+    EditarItensProdutosMem
+  else
+    AdicionaItensProdutoMem;
+  CalcTotalPedido;
+end;
+
+procedure TFrmPrincipal.btnBuscarClientesClick(Sender: TObject);
+begin
+  if edtCodCliente.Text = '' then
+  begin
+    ShowMessage('Atenção... Deve adicionar o código do cliente.');
+    edtCodCliente.SetFocus;
+    exit
+  end;
+  FOpen := TControllerCrud
+    .New
+    ._OpenSQL
+    ._OpenClientes('clientes', TArray<TEdit>.Create(edtDescCliente, edtCidade, edtUF), ' codigo = '+QuotedStr(edtCodCliente.Text)+' ');
+end;
+
+procedure TFrmPrincipal.btnBuscarPedidosClick(Sender: TObject);
+  var LCodPedido : String;
+begin
+  LCodPedido := EmptyStr;
+  if edtCodPedido.Text = '' then
+  begin
+    ShowMessage('Atenção... Deve adicionar o código do pedido de vendas.');
+    edtCodPedido.SetFocus;
+    exit
+  end;
+
+  LCodPedido := edtCodPedido.Text;
+  LimparCampos(false,'Venda');
+  FOpen := TControllerCrud
+    .New
+    ._OpenSQL
+    ._OpenPedidos('pedidos',
+      TArray<TEdit>.Create(nil, edtCodCliente, edtDescCliente, edtCidade, edtUF),
+      dsPedidosItens,' p.codigo = '+QuotedStr(LCodPedido)+' ',lbTotal);
+  edtCodPedido.Text := LCodPedido;
+  FrmPrincipal.Caption := FrmPrincipal.Caption + ' - Nº Pedido: ' + LCodPedido;
+
+  btnAdd.Enabled := true;
+end;
+
+procedure TFrmPrincipal.btnExcluirClick(Sender: TObject);
+begin
+  if edtCodPedido.Text = '' then
+  begin
+    ShowMessage('Atenção... Deve adicionar o código do pedido de vendas.');
+    edtCodPedido.SetFocus;
+    exit
+  end;
+  FDelete := TControllerCrud
+    .New
+    ._DeleteSQL
+    ._Delete('pedidos',edtCodPedido.Text);
+end;
+
+procedure TFrmPrincipal.EditarItensProdutosMem;
+begin
+  item_produto.Edit;
+  item_produtodescricao.AsString := edtDescProduto.Text;
+  item_produtovlr_unitario.Value := TextToFloat(edtValorUnit.Text);
+  item_produtoquantidade.Value := TextToFloat(edtQtde.Text);
+  item_produtovlr_total.Value := TextToFloat(edtVlrTotal.Text);
+  item_produto.Post;
+  edtDescProduto.Clear;
+  edtQtde.Clear;
+  edtValorUnit.Clear;
+  edtVlrTotal.Clear;
+  edtDescProduto.SetFocus;
+  btnAdd.Caption := '+ Adicionar';
+end;
+
+procedure TFrmPrincipal.btnNovoClick(Sender: TObject);
+begin
+  if TwinControl(Sender).Name = 'btnNovo' then
+  begin
+    TratarCampos(false);
+    FOpen := TControllerCrud
+      .New
+      ._OpenSQL
+      ._Open('clientes','codigo = 0');
+    FOpen := TControllerCrud
+      .New
+      ._OpenSQL
+      ._Open('produtos','codigo = 0');
+    FOpen := TControllerCrud
+      .New
+      ._OpenSQL
+      ._Open('pedidos','codigo = 0');
+    FOpen := TControllerCrud
+      .New
+      ._OpenSQL
+      ._Open('pedidos_produtos','codigo_pedido = 0');
+    edtDescCliente.SetFocus;
+    btnAdd.Enabled := true;
+    btnCancelar.Enabled := true;
+    FStatePedido := 'Novo'
+  end
+  else if TwinControl(Sender).Name = 'btnGravar' then
+  begin
+    if item_produto.IsEmpty then
+    begin
+      ShowMessage('Atenção... Deve adicionar pelo menos um produto antes de gravar.');
+      exit
+    end;
+    TratarCampos(true);
+    if FStatePedido = 'Novo' then
+    begin
+      FInsert := TControllerCrud
+        .New
+        ._InsertSQL
+        ._InsertPedido(edtDescCliente.Text,edtCidade.Text,edtUF.Text,dsPedidosItens);
+    end
+    else
+    begin
+      FUpdate := TControllerCrud
+        .New
+        ._UpdateSQL
+        ._Update(dsPedidosItens,StrToInt(edtCodPedido.Text));
+    end;
+    LimparCampos(true);
+  end
+  else if TwinControl(Sender).Name = 'btnCancelar' then
+  begin
+     FCancelar := TControllerCrud
+    .New
+    ._CancelSQL
+    ._Cancelar(dsPedidosItens);
+    LimparCampos(true);
+  end
+  else if TwinControl(Sender).Name = 'btnExcluir' then
+  begin
+
+  end;
+end;
+
+function TFrmPrincipal.CalcTotalPedido: String;
+var LTotal: Double;
+begin
+  LTotal := 0;
+  item_produto.First;
+  while not item_produto.Eof do
+  begin
+    LTotal := LTotal + TextToFloat(item_produtovlr_total.AsString);
+    item_produto.Next;
+  end;
+  Result := FormatFloat('#,##0.00', LTotal);
+
+  lbTotal.Caption := 'TOTAL: ' + Result;
+end;
+
+procedure TFrmPrincipal.CalcularTotal;
+var
+  LQtd      : Double;
+  LUnitario : Double;
+  LTotal    : Double;
+begin
+  LQtd      := StrToFloatDef(StringReplace(edtQtde.Text, '.', '', [rfReplaceAll]), 0);
+  LUnitario := StrToFloatDef(StringReplace(edtValorUnit.Text, '.', '', [rfReplaceAll]), 0);
+  LTotal    := LQtd * LUnitario;
+  edtValorUnit.Text := FormatFloat('#,##0.00', LUnitario);
+  edtVlrTotal.Text := FormatFloat('#,##0.00', LTotal);
+end;
+
+procedure TFrmPrincipal.dbgPedidosDblClick(Sender: TObject);
+begin
+  if not item_produto.IsEmpty then
+  begin
+    if item_produto.Locate('descricao', item_produtodescricao.AsString, []) then
+    begin
+      edtDescProduto.Text := item_produtodescricao.AsString;
+      edtQtde.Text := item_produtoquantidade.AsString;
+      edtValorUnit.Text := FormatFloat('#,##0.00', item_produtovlr_unitario.Value);
+      edtVlrTotal.Text := FormatFloat('#,##0.00', item_produtovlr_total.Value);
+
+      btnAdd.Caption := '+ Atualizar';
+      item_produto.Edit;
+      edtDescProduto.SetFocus;
+      btnAdd.Enabled := true;
+      FStatePedido := 'Editar';
+
+      edtDescCliente.ReadOnly := FStatePedido = 'Editar';
+      edtCidade.ReadOnly := FStatePedido = 'Editar';
+      edtUF.ReadOnly := FStatePedido = 'Editar';
+      edtDescProduto.ReadOnly := FStatePedido = 'Editar';
+    end;
+  end;
+end;
+
+procedure TFrmPrincipal.dbgPedidosKeyDown(Sender: TObject; var Key: Word;
+  Shift: TShiftState);
+begin
+  if Key = VK_DELETE then
+  begin
+    if item_produto.IsEmpty then
+      Exit;
+
+    if Application.MessageBox('Deseja realmente excluir o registro ???', 'Atenção',
+      MB_YesNo + MB_ICONQUESTION + MB_DEFBUTTON2) = idYes then
+    begin
+      if item_produto.State in [dsBrowse] then
+        item_produto.Delete;
+    end;
+    CalcTotalPedido;
+    Key := 0;
+  end;
+  if Key = VK_RETURN then
+  begin
+    dbgPedidosDblClick(Sender);
+    Key := 0;
+  end;
+end;
+
+procedure TFrmPrincipal.edtCodClienteKeyDown(Sender: TObject; var Key: Word;
+  Shift: TShiftState);
+begin
+ if Key = VK_RETURN then
+    btnBuscarClientes.Click;
+end;
+
+procedure TFrmPrincipal.edtCodPedidoKeyDown(Sender: TObject; var Key: Word;
+  Shift: TShiftState);
+begin
+ if Key = VK_RETURN then
+    btnBuscarPedidos.Click;
+end;
+
+procedure TFrmPrincipal.edtQtdeExit(Sender: TObject);
+begin
+  CalcularTotal;
+end;
+
+procedure TFrmPrincipal.edtQtdeKeyPress(Sender: TObject; var Key: Char);
+begin
+  if not (Key in ['0'..'9', ',', #8]) then
+    Key := #0;
+end;
+
+procedure TFrmPrincipal.edtValorUnitExit(Sender: TObject);
+begin
+  CalcularTotal;
+end;
+
+procedure TFrmPrincipal.FormCreate(Sender: TObject);
+begin
+  TControllerConexao
+    .New
+    .Conexao;
+  FStatePedido := '';
+end;
+
+procedure TFrmPrincipal.FormKeyPress(Sender: TObject; var Key: Char);
+begin
+  if Sender is TEdit then
+  begin
+    if not (Key in ['0'..'9', ',', #8, #13]) then
+      Key := #0;
+  end;
+
+  if Key = #13 then
+  begin
+    Key := #0;
+    Perform(WM_NextDlgCtl, 0, 0);
+  end;
+end;
+
+procedure TFrmPrincipal.LimparCampos(AValue : Boolean = true; ATipo : string = '');
+begin
+  edtDescCliente.Clear;
+  edtCidade.Clear;
+  edtUF.Clear;
+  edtDescProduto.Clear;
+  edtQtde.Clear;
+  edtValorUnit.Clear;
+  edtVlrTotal.Clear;
+  edtCodCliente.Clear;
+  edtCodPedido.Clear;
+
+  if ATipo = 'Venda' then
+    btnGravar.Enabled := true
+  else
+    btnGravar.Enabled := false;
+  if ATipo = 'Venda' then
+    btnNovo.Enabled := false
+  else
+    btnNovo.Enabled := true;
+  if ATipo = 'Venda' then
+    btnCancelar.Enabled := true
+  else
+    btnCancelar.Enabled := false;
+  btnAdd.Enabled := false;
+  lbTotal.Caption := 'TOTAL: 0,00';
+  FrmPrincipal.Caption := 'Sistema de Vendas';
+  TratarCampos(AValue);
+end;
+
+procedure TFrmPrincipal.TratarCampos(AValue : Boolean);
+begin
+  edtDescCliente.ReadOnly := AValue;
+  edtCidade.ReadOnly := AValue;
+  edtUF.ReadOnly := AValue;
+  edtDescProduto.ReadOnly := AValue;
+  edtQtde.ReadOnly := AValue;
+  edtValorUnit.ReadOnly := AValue;
+end;
+
+procedure TFrmPrincipal.ValidarCampos;
+begin
+  if edtDescCliente.Text = '' then
+  begin
+    ShowMessage('Deve preencher o nome do cliente');
+    edtDescCliente.SetFocus;
+    abort
+  end;
+  if edtCidade.Text = '' then
+  begin
+    ShowMessage('Deve preencher a cidade');
+    edtCidade.SetFocus;
+    abort
+  end;
+  if edtUF.Text = '' then
+  begin
+    ShowMessage('Deve preencher a UF');
+    edtUF.SetFocus;
+    abort
+  end;
+  if edtDescProduto.Text = '' then
+  begin
+    ShowMessage('Deve preencher a descrição do produto');
+    edtDescProduto.SetFocus;
+    abort
+  end;
+  if StrToIntDef(edtQtde.Text,0) = 0 then
+  begin
+    ShowMessage('Deve preencher a quantidade');
+    edtQtde.SetFocus;
+    abort
+  end;
+  if (edtValorUnit.Text = '') or (edtValorUnit.Text = '0,00') then
+  begin
+    ShowMessage('Deve preencher valor unitário');
+    edtValorUnit.SetFocus;
+    abort
+  end;
+end;
+
+end.

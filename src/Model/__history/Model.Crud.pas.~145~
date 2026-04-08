@@ -1,0 +1,430 @@
+﻿unit Model.Crud;
+
+interface
+
+  uses
+    Data.DB,
+    System.SysUtils,
+    Vcl.Forms,
+    Vcl.Dialogs,
+    Interfaces.Crud,
+    Interfaces.ComponenteQuery,
+    Controller.ComponenteQuery,
+    Winapi.Windows,
+    Vcl.Controls,
+    math,
+    strutils,
+    Generics.Collections,
+    Vcl.StdCtrls;
+
+  type
+   TSQLQuery = class(TInterfacedObject,iSQLOpen,iSQLInsert,iSQLUpdate,iSQLDelete,iSQLCancelar)
+     private
+       FQuery : iQuery;
+       FForm : string;
+     public
+     Constructor Create;
+     destructor destroy; override;
+       class function NewOpen : iSQLOpen;
+       class function NewInert : iSQLInsert;
+       class function NewForm : iSQLInsert;
+       class function NewUpdate : iSQLUpdate; overload;
+       class function NewDelete : iSQLDelete; overload;
+       class function NewCancelar : iSQLCancelar; overload;
+
+       function _Open(aTabela : string; aDataSource : TDataSource = nil) : iSQLOpen; overload;
+       function _Open(aTabela : string; aParam : String = ''; aDataSource : TDataSource = nil) : iSQLOpen; overload;
+       function _OpenClientes(aTabela: string; aEdits: TArray<TEdit>; aParam: string = ''): iSQLOpen; overload;
+       function _OpenPedidos(aTabela: string; aEdits: TArray<TEdit>; aDataSource: TDataSource; aParam: string; ALabel : TLabel): iSQLOpen; overload;
+
+       function _Insert(aTabela : String; aDataSource : TDataSource) : iSQLInsert; overload;
+       function _InsertPedido(Cli_Nome : String; Cli_Cidade : String; Cli_UF : String; aDataSource : TDataSource = nil) : iSQLInsert; overload;
+
+       function _Update : iSQLUpdate; overload;
+       function _Update(aDataSource : TDataSource; ACodigo : Integer) : iSQLUpdate; overload;
+       function TipoFormulario(aTipoForm : String) : iSQLUpdate;
+
+       function _Delete(aTabela : string; aParam : String) : iSQLDelete;
+
+       function _Cancelar(aDataSource : TDataSource) : iSQLCancelar;
+
+   end;
+
+implementation
+
+{ TSQLQuery }
+
+constructor TSQLQuery.Create;
+begin
+  FQuery := TControllerComponenteQuery.New.Query;
+end;
+
+destructor TSQLQuery.destroy;
+begin
+  inherited;
+end;
+
+function TSQLQuery._Open(aTabela: string; aDataSource: TDataSource): iSQLOpen;
+begin
+  Result := Self;
+  FQuery.Dataset.SQL.Clear;
+  FQuery.Dataset.SQL.Add('select * from ' + aTabela);
+  aDataSource.DataSet := FQuery.Dataset;
+  FQuery.Dataset.Open();
+end;
+
+function TSQLQuery._Open(aTabela, aParam: String; aDataSource: TDataSource): iSQLOpen;
+  Var LWhere : String;
+begin
+  if aParam <> '' then
+    LWhere := ' where ' + QuotedStr(aParam);
+
+  Result := Self;
+  FQuery.Dataset.SQL.Clear;
+  FQuery.Dataset.SQL.Add('select * from ' + aTabela + LWhere);
+  FQuery.Dataset.Open();
+
+  if Assigned(aDataSource) then
+    aDataSource.DataSet := FQuery.Dataset;
+end;
+
+function TSQLQuery._OpenClientes(aTabela: string; aEdits: TArray<TEdit>; aParam: string): iSQLOpen;
+var
+  LWhere : String;
+  I      : Integer;
+begin
+  if aParam <> '' then
+    LWhere := ' where ' + aParam;
+
+  Result := Self;
+  FQuery.Dataset.SQL.Clear;
+  FQuery.Dataset.SQL.Add('select nome,cidade,uf from ' + aTabela + LWhere);
+  FQuery.Dataset.Open();
+
+  if FQuery.Dataset.RecordCount > 0 then
+  begin
+    for I := 0 to High(aEdits) do
+    begin
+      if I < FQuery.Dataset.Fields.Count then
+        aEdits[I].Text := FQuery.Dataset.Fields[I].AsString;
+    end;
+  end
+  else
+    ShowMessage('Cliente não localizado.');
+end;
+
+function TSQLQuery._OpenPedidos(aTabela: string; aEdits: TArray<TEdit>; aDataSource: TDataSource; aParam: string ; ALabel : TLabel): iSQLOpen;
+var
+  LWhere     : String;
+  I          : Integer;
+  LValorTotal: Currency;
+begin
+  Result := Self;
+  aDataSource.DataSet.Close;
+  if aParam <> '' then
+    LWhere := ' WHERE ' + aParam;
+
+  FQuery.Dataset.SQL.Clear;
+  FQuery.Dataset.SQL.Add('SELECT p.codigo as cod_pedido,');
+  FQuery.Dataset.SQL.Add('       c.codigo AS codigo_cliente,');
+  FQuery.Dataset.SQL.Add('       c.nome,');
+  FQuery.Dataset.SQL.Add('       c.cidade,');
+  FQuery.Dataset.SQL.Add('       c.uf,');
+  FQuery.Dataset.SQL.Add('       p.valor_total');
+  FQuery.Dataset.SQL.Add('FROM pedidos p');
+  FQuery.Dataset.SQL.Add('INNER JOIN clientes c ON c.codigo = p.codigo_cliente');
+  FQuery.Dataset.SQL.Add(LWhere);
+  FQuery.Dataset.Open();
+
+  if FQuery.Dataset.RecordCount > 0 then
+  begin
+    for I := 1 to High(aEdits) do
+    begin
+      if I < FQuery.Dataset.Fields.Count then
+        aEdits[I].Text := FQuery.Dataset.Fields[I].AsString;
+    end;
+    aParam := StringReplace(aParam, 'p.codigo = ', '', [rfReplaceAll, rfIgnoreCase]);
+
+    FQuery.Dataset.SQL.Clear;
+    FQuery.Dataset.SQL.Add('SELECT pp.codigo_pedido,');
+    FQuery.Dataset.SQL.Add('       pp.codigo_produto,');
+    FQuery.Dataset.SQL.Add('       pro.descricao,');
+    FQuery.Dataset.SQL.Add('       pp.quantidade,');
+    FQuery.Dataset.SQL.Add('       pp.vr_unitario,');
+    FQuery.Dataset.SQL.Add('       pp.vr_total');
+    FQuery.Dataset.SQL.Add('FROM pedidos_produtos pp ');
+    FQuery.Dataset.SQL.Add('INNER JOIN produtos pro ON pro.codigo = pp.codigo_produto ');
+    FQuery.Dataset.SQL.Add('WHERE pp.codigo_pedido = ' + aParam);
+    FQuery.Dataset.Open();
+
+    FQuery.Dataset.RecordCount;
+
+    if Not aDataSource.DataSet.Active then
+      aDataSource.DataSet.Active := true;
+    while not FQuery.Dataset.Eof do
+    begin
+      aDataSource.DataSet.Append;
+      aDataSource.DataSet.FieldByName('codigo').AsInteger := FQuery.Dataset.FieldByName('codigo_produto').AsInteger;
+      aDataSource.DataSet.FieldByName('descricao').AsString := FQuery.Dataset.FieldByName('descricao').AsString;
+      aDataSource.DataSet.FieldByName('quantidade').Value := FQuery.Dataset.FieldByName('quantidade').Value;
+      aDataSource.DataSet.FieldByName('vlr_unitario').Value := FQuery.Dataset.FieldByName('vr_unitario').Value;
+      aDataSource.DataSet.FieldByName('vlr_total').Value := FQuery.Dataset.FieldByName('vr_total').Value;
+      aDataSource.DataSet.Post;
+
+      LValorTotal := LValorTotal + FQuery.Dataset.FieldByName('vr_total').Value;
+
+      FQuery.Dataset.Next;
+    end;
+    ALabel.Caption := 'TOTAL: ' + FormatFloat('#,##0.00', LValorTotal);
+  end
+  else
+  begin
+    ShowMessage('Pedido não localizado.');
+    Exit;
+  end;
+end;
+
+function TSQLQuery._Insert(aTabela: String; aDataSource : TDataSource): iSQLInsert;
+begin
+  Result := Self;
+
+  FQuery.Dataset.SQL.Clear;
+  FQuery.Dataset.SQL.Add('select * from ' + aTabela);
+  aDataSource.DataSet := FQuery.Dataset;
+  FQuery.Dataset.Open();
+
+  FQuery.Dataset.Fields[0].AutoGenerateValue := arDefault;
+  FQuery.Dataset.Fields[0].ProviderFlags := [pfInWhere, pfInKey];
+  FQuery.Dataset.Fields[0].ReadOnly := true;
+  FQuery.Dataset.Fields[0].Required := true;
+
+  FQuery.DataSet.Append;
+end;
+
+function TSQLQuery._InsertPedido(Cli_Nome: String; Cli_Cidade: String; Cli_UF: String; aDataSource: TDataSource = nil): iSQLInsert;
+var
+  LVlrTotal     : Currency;
+  LCodCliente   : Integer;
+  LCodPedido    : Integer;
+  LCodProduto   : Integer;
+  LProdutoCodes : TList<Integer>;
+  I             : Integer;
+begin
+  Result := Self;
+  LVlrTotal     := 0;
+  LCodCliente   := 0;
+  LCodPedido    := 0;
+  LProdutoCodes := TList<Integer>.Create;
+  try
+    FQuery.Dataset.Connection.StartTransaction;
+    try
+      {Inserir Cliente}
+      FQuery.Dataset.SQL.Text := 'INSERT INTO clientes (nome, cidade, uf) VALUES (:nome, :cidade, :uf)';
+      FQuery.Dataset.ParamByName('nome').AsString   := Cli_Nome;
+      FQuery.Dataset.ParamByName('cidade').AsString := Cli_Cidade;
+      FQuery.Dataset.ParamByName('uf').AsString     := Cli_UF;
+      FQuery.Dataset.ExecSQL;
+      FQuery.Dataset.SQL.Text := 'SELECT LAST_INSERT_ID() AS codigo';
+      FQuery.Dataset.Open;
+      LCodCliente := FQuery.Dataset.FieldByName('codigo').AsInteger;
+      FQuery.Dataset.Close;
+
+      {Inserir Produtos}
+      aDataSource.DataSet.First;
+      while not aDataSource.DataSet.Eof do
+      begin
+        FQuery.Dataset.SQL.Text := 'INSERT INTO produtos (descricao, preco_venda) VALUES (:descricao, :preco_venda)';
+        FQuery.Dataset.ParamByName('descricao').AsString := aDataSource.DataSet.FieldByName('descricao').AsString;
+        FQuery.Dataset.ParamByName('preco_venda').Value  := aDataSource.DataSet.FieldByName('vlr_unitario').Value;
+        FQuery.Dataset.ExecSQL;
+        FQuery.Dataset.SQL.Text := 'SELECT LAST_INSERT_ID() AS codigo';
+        FQuery.Dataset.Open;
+        LCodProduto := FQuery.Dataset.FieldByName('codigo').AsInteger;
+        FQuery.Dataset.Close;
+        LProdutoCodes.Add(LCodProduto);
+        LVlrTotal := LVlrTotal + aDataSource.DataSet.FieldByName('vlr_total').Value;
+        aDataSource.DataSet.Next;
+      end;
+
+      {Inserir Pedido}
+      FQuery.Dataset.SQL.Text := 'INSERT INTO pedidos (data_emissao, codigo_cliente, valor_total) VALUES (:data_emissao, :codigo_cliente, :valor_total)';
+      FQuery.Dataset.ParamByName('data_emissao').AsDate  := Now;
+      FQuery.Dataset.ParamByName('codigo_cliente').Value := LCodCliente;
+      FQuery.Dataset.ParamByName('valor_total').Value    := LVlrTotal;
+      FQuery.Dataset.ExecSQL;
+      FQuery.Dataset.SQL.Text := 'SELECT LAST_INSERT_ID() AS codigo';
+      FQuery.Dataset.Open;
+      LCodPedido := FQuery.Dataset.FieldByName('codigo').AsInteger;
+      FQuery.Dataset.Close;
+
+      {Inserir Pedidos Produtos}
+      aDataSource.DataSet.First;
+      I := 0;
+      while not aDataSource.DataSet.Eof do
+      begin
+        FQuery.Dataset.SQL.Text :=
+          'INSERT INTO pedidos_produtos (codigo_pedido, codigo_produto, quantidade, vr_unitario, vr_total) ' +
+          'VALUES (:codigo_pedido, :codigo_produto, :quantidade, :vr_unitario, :vr_total)';
+        FQuery.Dataset.ParamByName('codigo_pedido').AsInteger  := LCodPedido;
+        FQuery.Dataset.ParamByName('codigo_produto').AsInteger := LProdutoCodes[I];
+        FQuery.Dataset.ParamByName('quantidade').Value         := aDataSource.DataSet.FieldByName('quantidade').Value;
+        FQuery.Dataset.ParamByName('vr_unitario').Value        := aDataSource.DataSet.FieldByName('vlr_unitario').Value;
+        FQuery.Dataset.ParamByName('vr_total').Value           := aDataSource.DataSet.FieldByName('vlr_total').Value;
+        FQuery.Dataset.ExecSQL;
+        Inc(I);
+        aDataSource.DataSet.Next;
+      end;
+
+      FQuery.Dataset.Connection.Commit;
+      ShowMessage('Pedido finalizado com sucesso!');
+    except
+      on E: Exception do
+      begin
+        FQuery.Dataset.Connection.Rollback;
+        raise Exception.CreateFmt('Erro ao inserir pedido. Operação revertida.%s%s', [sLineBreak, E.Message]);
+      end;
+    end;
+  finally
+    LProdutoCodes.Free;
+    aDataSource.DataSet.Close;
+  end;
+end;
+
+function TSQLQuery._Update(aDataSource: TDataSource; ACodigo : Integer): iSQLUpdate;
+  var LValorTotal : Currency;
+      LCodProduto : integer;
+begin
+  Result := self;
+  LValorTotal := 0;
+  try
+    FQuery.Dataset.Connection.StartTransaction;
+
+    aDataSource.DataSet.First;
+    while not aDataSource.DataSet.Eof do
+    begin
+      LValorTotal := LValorTotal + aDataSource.Dataset.FieldByName('vlr_total').Value;
+
+      FQuery.Dataset.SQL.Text := 'update pedidos set valor_total = :valor_total where codigo = :codigo ';
+      FQuery.Dataset.ParamByName('valor_total').Value := LValorTotal;
+      FQuery.Dataset.ParamByName('codigo').Value := ACodigo;
+      FQuery.Dataset.ExecSQL;
+
+      if aDataSource.Dataset.FieldByName('codigo').Value > 0 then
+      begin
+        FQuery.Dataset.SQL.Text := 'update pedidos_produtos set quantidade = :quantidade, vr_unitario = :vr_unitario, vr_total = :vr_total where codigo_pedido = :codigo_pedido and codigo_produto = :codigo_produto ';
+        FQuery.Dataset.ParamByName('quantidade').Value := aDataSource.Dataset.FieldByName('quantidade').Value;
+        FQuery.Dataset.ParamByName('vr_unitario').Value := aDataSource.Dataset.FieldByName('vlr_unitario').Value;
+        FQuery.Dataset.ParamByName('vr_total').Value := LValorTotal;
+        FQuery.Dataset.ParamByName('codigo_pedido').Value := ACodigo;
+        FQuery.Dataset.ParamByName('codigo_produto').Value := aDataSource.Dataset.FieldByName('codigo').Value;
+        FQuery.Dataset.ExecSQL;
+      end
+      else
+      begin
+        FQuery.Dataset.SQL.Clear;
+        FQuery.Dataset.SQL.Text := 'INSERT INTO produtos (descricao, preco_venda) VALUES (:descricao, :preco_venda)';
+        FQuery.Dataset.ParamByName('descricao').AsString := aDataSource.DataSet.FieldByName('descricao').AsString;
+        FQuery.Dataset.ParamByName('preco_venda').Value  := aDataSource.DataSet.FieldByName('vlr_unitario').Value;
+        FQuery.Dataset.ExecSQL;
+        FQuery.Dataset.SQL.Text := 'SELECT LAST_INSERT_ID() AS codigo';
+        FQuery.Dataset.Open;
+        LCodProduto := FQuery.Dataset.FieldByName('codigo').AsInteger;
+        LValorTotal := LValorTotal + aDataSource.DataSet.FieldByName('vlr_total').Value;
+
+        FQuery.Dataset.SQL.Clear;
+        FQuery.Dataset.SQL.Text := 'INSERT INTO pedidos_produtos (codigo_pedido, codigo_produto, quantidade, vr_unitario, vr_total) ' +
+          'VALUES (:codigo_pedido, :codigo_produto, :quantidade, :vr_unitario, :vr_total)';
+        FQuery.Dataset.ParamByName('codigo_pedido').AsInteger  := ACodigo;
+        FQuery.Dataset.ParamByName('codigo_produto').AsInteger := aDataSource.Dataset.FieldByName('codigo').Value;
+        FQuery.Dataset.ParamByName('quantidade').Value         := aDataSource.DataSet.FieldByName('quantidade').Value;
+        FQuery.Dataset.ParamByName('vr_unitario').Value        := aDataSource.DataSet.FieldByName('vlr_unitario').Value;
+        FQuery.Dataset.ParamByName('vr_total').Value           := aDataSource.DataSet.FieldByName('vlr_total').Value;
+        FQuery.Dataset.ExecSQL;
+      end;
+
+      aDataSource.DataSet.Next;
+    end;
+
+    FQuery.Dataset.Connection.Commit;
+    ShowMessage('Pedido atualizado com sucesso!');
+    aDataSource.DataSet.Close;
+    except on E: Exception do
+    begin
+        FQuery.Dataset.Connection.Rollback;
+        raise Exception.CreateFmt('Erro ao inserir pedido. Operação revertida.%s%s', [sLineBreak, E.Message]);
+    end;
+  end;
+end;
+
+function TSQLQuery._Update: iSQLUpdate;
+begin
+  Result := Self;
+end;
+
+function TSQLQuery._Cancelar(aDataSource: TDataSource): iSQLCancelar;
+begin
+  Result := Self;
+  aDataSource.Dataset.Cancel;
+  aDataSource.Dataset.Active := false;
+end;
+
+function TSQLQuery._Delete(aTabela : string; aParam : String) : iSQLDelete;
+begin
+  Result := Self;
+  if Application.MessageBox(PChar ('Deseja realmente excluir o registro ???'),'Atenção', MB_YesNo + MB_ICONQUESTION + MB_DEFBUTTON2) = idYes then
+  begin
+    FQuery.Dataset.SQL.Clear;
+    FQuery.Dataset.SQL.Add('select * from ' + aTabela + ' where codigo = ' + aParam);
+    FQuery.Dataset.Open();
+      FQuery.Dataset.Delete;
+  end
+   else
+    Abort
+end;
+
+class function TSQLQuery.NewOpen: iSQLOpen;
+begin
+  Result := Self.Create;
+end;
+
+class function TSQLQuery.NewInert: iSQLInsert;
+begin
+  Result := Self.Create;
+end;
+
+class function TSQLQuery.NewCancelar: iSQLCancelar;
+begin
+  Result := Self.Create;
+end;
+
+class function TSQLQuery.NewUpdate: iSQLUpdate;
+begin
+  Result := Self.Create;
+end;
+
+function TSQLQuery.TipoFormulario(aTipoForm: String): iSQLUpdate;
+begin
+  Result := Self;
+  if (aTipoForm = ('Cadastro de Clientes')) then
+    FForm  := 'Clientes';
+  if (aTipoForm = 'Cadastro de Fabricantes') then
+    FForm  := 'Fabricantes';
+  if (aTipoForm = 'Cadastro de Fornecedores') then
+    FForm  := 'Fornecedores';
+  if (aTipoForm = 'Cadastro de Empresas') then
+    FForm  := 'Empresa';
+  if (aTipoForm = 'Cadastro de Funcionarios') then
+    FForm  := 'Funcionarios';
+end;
+
+class function TSQLQuery.NewDelete: iSQLDelete;
+begin
+  Result := Self.Create;
+end;
+
+class function TSQLQuery.NewForm: iSQLInsert;
+begin
+  Result := Self.Create;
+end;
+
+end.
